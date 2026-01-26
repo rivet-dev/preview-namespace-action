@@ -52,11 +52,7 @@ jobs:
 | `rivet-endpoint` | No | `https://api.rivet.dev` | Rivet Engine API endpoint |
 | `github-token` | No | `${{ github.token }}` | GitHub token for PR comments |
 | `main-branch` | No | `main` | Main branch name for production deployments |
-| `runner-config` | No | `{}` | JSON object to override [runner configuration](https://rivet.dev/docs/connect/freestyle#configure-runner) |
-
-## Runner Configuration
-
-The `runner-config` input accepts a JSON object that is passed directly to the Rivet API. See the [Rivet documentation](https://rivet.dev/docs/connect/freestyle#configure-runner) for all available options.
+| `runner-config` | No | `{}` | JSON object to override runner configuration |
 
 ## Private Vercel Deployments
 

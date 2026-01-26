@@ -30,7 +30,6 @@ inputs:
   runner-config:
     description: |
       JSON object to override runner configuration. Passed directly to the Rivet API.
-      See https://rivet.dev/docs/connect/freestyle#configure-runner for available options.
 
       Example for private Vercel deployments with auth bypass:
       runner-config: '{"headers": {"x-vercel-protection-bypass": "${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}"}}'
