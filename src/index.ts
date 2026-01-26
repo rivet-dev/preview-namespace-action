@@ -705,9 +705,9 @@ async function main() {
 		console.log("");
 		console.log("Step 3: Creating/finding namespace...");
 		const prTitle = await getPrTitle();
-		// Format: "#14: Fix bug" (16 char limit)
+		// Format: "PR 14: Fix bug" (16 char limit)
 		const displayName = IS_PR
-			? `#${PR_NUMBER}: ${prTitle}`.substring(0, 16)
+			? `PR ${PR_NUMBER}: ${prTitle}`.substring(0, 16)
 			: "Production";
 		console.log(`  Display name: "${displayName}"`);
 
