@@ -251,23 +251,6 @@ async function rivetEngineFetch(path: string, accessToken: string, options: Requ
 }
 
 // GitHub API helpers
-async function getPrTitle(): Promise<string> {
-	if (!IS_PR) {
-		return "Production";
-	}
-	const response = await fetch(
-		`https://api.github.com/repos/${REPO_FULL_NAME}/pulls/${PR_NUMBER}`,
-		{
-			headers: {
-				Authorization: `token ${GITHUB_TOKEN}`,
-				Accept: "application/vnd.github.v3+json",
-			},
-		}
-	);
-	const pr = await response.json();
-	return pr.title || "";
-}
-
 interface ExistingComment {
 	id: number;
 	body: string;
@@ -701,14 +684,10 @@ async function main() {
 		let namespace: any;
 		let engineNamespace: string;
 
-		// Get PR title for display name
+		// Get or create namespace
 		console.log("");
 		console.log("Step 3: Creating/finding namespace...");
-		const prTitle = await getPrTitle();
-		// Format: "PR 14: Fix bug" (16 char limit)
-		const displayName = IS_PR
-			? `PR ${PR_NUMBER}: ${prTitle}`.substring(0, 16)
-			: "Production";
+		const displayName = IS_PR ? `PR #${PR_NUMBER}` : "Production";
 		console.log(`  Display name: "${displayName}"`);
 
 		// Namespace metadata
