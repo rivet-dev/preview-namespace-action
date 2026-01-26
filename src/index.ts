@@ -50,6 +50,7 @@ const COMMENT_MARKER = "<!-- rivet-preview-status -->";
 interface RivetData {
 	namespace: string;
 	engineNamespace: string;
+	bypassSecret?: string;
 }
 
 const RIVET_DATA_REGEX = /<!--\s*<rivet-data>([\s\S]*?)<\/rivet-data>\s*-->/;
@@ -61,7 +62,11 @@ function parseRivetData(body: string): RivetData | null {
 	try {
 		const data = JSON.parse(match[1].trim());
 		if (typeof data.namespace === "string" && typeof data.engineNamespace === "string") {
-			return data;
+			return {
+				namespace: data.namespace,
+				engineNamespace: data.engineNamespace,
+				bypassSecret: typeof data.bypassSecret === "string" ? data.bypassSecret : undefined,
+			};
 		}
 		return null;
 	} catch {
@@ -474,30 +479,28 @@ async function setVercelEnvVar(
 async function getOrCreateVercelBypassSecret(): Promise<string | null> {
 	const teamQuery = VERCEL_TEAM_ID ? `?teamId=${VERCEL_TEAM_ID}` : "";
 
-	// PATCH with empty protectionBypass to get existing secrets without creating new ones
-	const getResponse = await fetch(
-		`https://api.vercel.com/v1/projects/${VERCEL_PROJECT_ID}/protection-bypass${teamQuery}`,
+	// First, try to get existing bypass secrets from project info
+	console.log("  Checking for existing bypass secrets...");
+	const projectResponse = await fetch(
+		`https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}${teamQuery}`,
 		{
-			method: "PATCH",
 			headers: {
 				Authorization: `Bearer ${VERCEL_TOKEN}`,
-				"Content-Type": "application/json",
 			},
-			body: JSON.stringify({ protectionBypass: {} }),
 		}
 	);
 
-	if (getResponse.ok) {
-		const data = await getResponse.json();
-		const bypasses = Object.entries(data.protectionBypass || {});
+	if (projectResponse.ok) {
+		const project = await projectResponse.json();
+		const bypasses = Object.entries(project.protectionBypass || {});
 		if (bypasses.length > 0) {
-			console.log("  Found existing bypass secret");
-			return bypasses[0][0];
+			console.log(`  Found ${bypasses.length} existing bypass secret(s), reusing first one`);
+			return bypasses[0][0] as string;
 		}
 	}
 
-	// Create a new bypass secret (empty body auto-generates one)
-	console.log("  Creating Vercel bypass secret...");
+	// No existing bypass, create a new one
+	console.log("  No existing bypass secret, creating new one...");
 	const response = await fetch(
 		`https://api.vercel.com/v1/projects/${VERCEL_PROJECT_ID}/protection-bypass${teamQuery}`,
 		{
@@ -526,7 +529,7 @@ async function getOrCreateVercelBypassSecret(): Promise<string | null> {
 	const bypasses = Object.entries(result.protectionBypass || {});
 	if (bypasses.length > 0) {
 		console.log("  Created bypass secret");
-		return bypasses[0][0];
+		return bypasses[0][0] as string;
 	}
 
 	return null;
@@ -764,15 +767,26 @@ async function main() {
 
 		console.log("  Created: secret, publishable, and access tokens");
 
-		// Step 5: Configure platform env vars
+		// Step 5: Get or create bypass secret (reuse from comment if available)
 		console.log("");
-		console.log(`Step 5: Setting ${PLATFORM} environment variables...`);
+		console.log("Step 5: Configuring deployment protection bypass...");
+		let bypassSecret: string | null = existingRivetData?.bypassSecret || null;
+		if (bypassSecret) {
+			console.log("  Reusing bypass secret from comment");
+		} else {
+			bypassSecret = await getPlatformBypassSecret();
+		}
+
+		// Step 6: Configure platform env vars
+		console.log("");
+		console.log(`Step 6: Setting ${PLATFORM} environment variables...`);
 		const dashboardUrl = `https://dashboard.rivet.dev/orgs/${organization}/projects/${project}/ns/${namespace.name}?skipOnboarding=1`;
 
-		// Build rivet data tag for comment
+		// Build rivet data tag for comment (includes bypass secret for reuse)
 		const rivetDataTag = buildRivetDataTag({
 			namespace: namespace.name,
 			engineNamespace,
+			bypassSecret: bypassSecret || undefined,
 		});
 
 		commentId = await updateComment(
@@ -784,9 +798,9 @@ async function main() {
 
 		console.log("  Done setting env vars");
 
-		// Step 6: Wait for platform deployment and configure runner
+		// Step 7: Wait for platform deployment and configure runner
 		console.log("");
-		console.log(`Step 6: Waiting for ${PLATFORM} deployment...`);
+		console.log(`Step 7: Waiting for ${PLATFORM} deployment...`);
 		commentId = await updateComment(
 			commentId,
 			rivetDataTag + "\n" + intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Waiting for ${PLATFORM}... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
@@ -794,11 +808,6 @@ async function main() {
 
 		const deploymentUrl = await getPlatformDeploymentUrl(BRANCH_NAME);
 		console.log(`  Got ${PLATFORM} deployment URL: ${deploymentUrl}`);
-
-		// Step 7: Get bypass secret for deployment protection
-		console.log("");
-		console.log("Step 7: Configuring deployment protection bypass...");
-		const bypassSecret = await getPlatformBypassSecret();
 
 		// Step 8: Configure runner for all regions
 		console.log("");
