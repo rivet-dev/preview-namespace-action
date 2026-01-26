@@ -52,33 +52,11 @@ jobs:
 | `rivet-endpoint` | No | `https://api.rivet.dev` | Rivet Engine API endpoint |
 | `github-token` | No | `${{ github.token }}` | GitHub token for PR comments |
 | `main-branch` | No | `main` | Main branch name for production deployments |
-| `runner-config` | No | `{}` | JSON object to override runner configuration |
+| `runner-config` | No | `{}` | JSON object to override [runner configuration](https://rivet.dev/docs/connect/freestyle#configure-runner) |
 
 ## Runner Configuration
 
-The `runner-config` input accepts a JSON object that is passed directly to the Rivet API. Any properties you specify will override the defaults. See the [Rivet documentation](https://rivet.dev/docs/connect/freestyle#configure-runner) for all available options.
-
-**Default values:**
-
-| Option | Default | Description |
-|:-------|:--------|:------------|
-| `max_runners` | `100000` | Maximum concurrent runners |
-| `min_runners` | `0` | Minimum runners to keep warm |
-| `request_lifespan` | `270` | Request timeout in seconds |
-| `slots_per_runner` | `1` | Slots per runner instance |
-| `runners_margin` | `0` | Runner margin for scaling |
-| `headers` | `{}` | Custom headers for requests to your deployment |
-
-### Example: Custom Runner Limits
-
-```yaml
-- uses: rivet-dev/preview-namespace-action@v1
-  with:
-    platform: vercel
-    rivet-token: ${{ secrets.RIVET_CLOUD_TOKEN }}
-    vercel-token: ${{ secrets.VERCEL_TOKEN }}
-    runner-config: '{"max_runners": 1000, "min_runners": 1}'
-```
+The `runner-config` input accepts a JSON object that is passed directly to the Rivet API. See the [Rivet documentation](https://rivet.dev/docs/connect/freestyle#configure-runner) for all available options.
 
 ## Private Vercel Deployments
 
