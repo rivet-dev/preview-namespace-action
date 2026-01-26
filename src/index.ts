@@ -549,6 +549,11 @@ async function setPlatformEnvVars(
 			await setVercelEnvVar("RIVET_NAMESPACE", namespace, branch);
 			await setVercelEnvVar("RIVET_RUNNER_TOKEN", secretToken, branch);
 			await setVercelEnvVar("RIVET_PUBLISHABLE_TOKEN", publishableToken, branch);
+			// Public endpoint/token for metadata response (tells clients where to connect)
+			// Format: https://namespace:token@api.rivet.dev
+			const endpointUrl = new URL(endpoint);
+			const publicEndpoint = `${endpointUrl.protocol}//${namespace}:${publishableToken}@${endpointUrl.host}`;
+			await setVercelEnvVar("RIVET_PUBLIC_ENDPOINT", publicEndpoint, branch);
 			break;
 		default:
 			throw new Error(`Unsupported platform: ${PLATFORM}`);
