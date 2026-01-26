@@ -487,7 +487,7 @@ async function main() {
 		console.log("Created tokens");
 
 		// Step 2: Configure Vercel env vars
-		const dashboardUrl = `https://hub.rivet.dev/projects/${project}/namespaces/${namespace.name}?skipOnboarding=1`;
+		const dashboardUrl = `https://dashboard.rivet.dev/projects/${project}/namespaces/${namespace.name}?skipOnboarding=1`;
 		commentId = await updateComment(
 			commentId,
 			intro + tableHeader + `| \`${VERCEL_PROJECT_NAME}\` | \`${namespace.name}\` | Configuring Vercel... | [Dashboard](${dashboardUrl}) |`

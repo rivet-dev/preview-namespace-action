@@ -33,7 +33,7 @@ jobs:
 
 ## Setup
 
-1. Get your Rivet Cloud token from [Rivet Hub](https://hub.rivet.dev) → Settings → Advanced → Manual Client Configuration
+1. Get your Rivet Cloud token from [Rivet Hub](https://dashboard.rivet.dev) → Settings → Advanced → Manual Client Configuration
 2. Get your Vercel token from [Vercel Account Settings](https://vercel.com/account/tokens)
 3. Add both as repository secrets:
    ```bash
