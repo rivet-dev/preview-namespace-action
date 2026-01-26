@@ -1,10 +1,8 @@
 # Rivet Preview Namespace Action
 
-Automatically create Rivet namespaces for preview deployments. Currently supports Vercel, with more platforms coming soon.
+Creates Rivet namespaces for preview deployments.
 
-## Usage
-
-Add this workflow to your repository at `.github/workflows/rivet-preview.yml`:
+## Quick Start
 
 ```yaml
 name: Rivet Preview
@@ -32,88 +30,31 @@ jobs:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
 ```
 
-## Setup
-
-1. Get your Rivet Cloud token from [Rivet Dashboard](https://dashboard.rivet.dev) → Settings → Advanced → Manual Client Configuration
-2. Get your Vercel token from [Vercel Account Settings](https://vercel.com/account/tokens)
-3. Add both as repository secrets:
-   ```bash
-   gh secret set RIVET_CLOUD_TOKEN
-   gh secret set VERCEL_TOKEN
-   ```
-
 ## Inputs
 
 | Input | Required | Default | Description |
 |:------|:---------|:--------|:------------|
-| `platform` | Yes | - | Deployment platform (currently only `vercel` is supported) |
+| `platform` | Yes | - | Deployment platform |
 | `rivet-token` | Yes | - | Rivet Cloud API token |
-| `vercel-token` | When platform is `vercel` | - | Vercel API token |
 | `rivet-endpoint` | No | `https://api.rivet.dev` | Rivet Engine API endpoint |
 | `github-token` | No | `${{ github.token }}` | GitHub token for PR comments |
 | `main-branch` | No | `main` | Main branch name for production deployments |
 | `runner-config` | No | `{}` | JSON object to override runner configuration |
 
-## Private Vercel Deployments
+## Providers
 
-If your Vercel preview deployments require authentication (e.g., Vercel Authentication is enabled), you need to configure a bypass secret so Rivet can reach your serverless endpoint.
+### Vercel
 
-### Step 1: Create a Bypass Secret in Vercel
+**Required input:** `vercel-token`
 
-1. Go to your Vercel project settings
-2. Navigate to **Deployment Protection** → **Protection Bypass for Automation**
-3. Create a new bypass secret and copy it
-
-### Step 2: Add the Secret to GitHub
+Get your token from [Vercel Account Settings](https://vercel.com/account/tokens) and add it as a repository secret:
 
 ```bash
-gh secret set VERCEL_AUTOMATION_BYPASS_SECRET
+gh secret set VERCEL_TOKEN
 ```
 
-### Step 3: Configure the Action
+**Private deployments:** If Vercel Authentication is enabled, create a bypass secret in Vercel (Project Settings → Deployment Protection → Protection Bypass for Automation) and configure:
 
 ```yaml
-- uses: rivet-dev/preview-namespace-action@v1
-  with:
-    platform: vercel
-    rivet-token: ${{ secrets.RIVET_CLOUD_TOKEN }}
-    vercel-token: ${{ secrets.VERCEL_TOKEN }}
-    runner-config: '{"headers": {"x-vercel-protection-bypass": "${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}"}}'
+runner-config: '{"headers": {"x-vercel-protection-bypass": "${{ secrets.VERCEL_BYPASS_SECRET }}"}}'
 ```
-
-This adds the `x-vercel-protection-bypass` header to all requests from Rivet to your Vercel deployment, allowing authenticated access.
-
-## Custom Main Branch
-
-If your main branch is not named `main`, configure it:
-
-```yaml
-- uses: rivet-dev/preview-namespace-action@v1
-  with:
-    platform: vercel
-    rivet-token: ${{ secrets.RIVET_CLOUD_TOKEN }}
-    vercel-token: ${{ secrets.VERCEL_TOKEN }}
-    main-branch: master
-```
-
-## What It Does
-
-1. Creates a Rivet namespace for each PR (`pr-{number}`) or production (`production`)
-2. Sets platform environment variables for the preview/production branch
-3. Configures Rivet serverless runners for all regions to point to your deployment
-4. Comments on PR with namespace status and dashboard link
-
-## Environment Variables Set
-
-The action automatically sets these environment variables on your deployment platform:
-
-- `RIVET_ENDPOINT` - Rivet Engine API endpoint
-- `RIVET_NAMESPACE` - Rivet namespace identifier
-- `RIVET_RUNNER_TOKEN` - Secret token for the serverless runner
-- `RIVET_PUBLISHABLE_TOKEN` - Publishable token for client-side use
-
-## Supported Platforms
-
-- **Vercel** - Full support
-- **Railway** - Coming soon
-- **Other platforms** - Open an issue to request support
