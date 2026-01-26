@@ -757,7 +757,7 @@ async function main() {
 		const dashboardUrl = `https://dashboard.rivet.dev/orgs/${organization}/projects/${project}/ns/${namespace.name}?skipOnboarding=1`;
 		commentId = await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Configuring ${PLATFORM}... | [Dashboard](${dashboardUrl}) |`
+			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Configuring ${PLATFORM}... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
 		);
 
 		await setPlatformEnvVars(RIVET_ENGINE_ENDPOINT, engineNamespace, secretToken, publishableToken, BRANCH_NAME);
@@ -769,7 +769,7 @@ async function main() {
 		console.log(`Step 6: Waiting for ${PLATFORM} deployment...`);
 		commentId = await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Waiting for ${PLATFORM}... | [Dashboard](${dashboardUrl}) |`
+			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Waiting for ${PLATFORM}... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
 		);
 
 		const deploymentUrl = await getPlatformDeploymentUrl(BRANCH_NAME);
@@ -785,7 +785,7 @@ async function main() {
 		console.log("Step 8: Configuring Rivet runners...");
 		commentId = await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Configuring runners... | [Dashboard](${dashboardUrl}) |`
+			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Configuring runners... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
 		);
 
 		await configureRunners(accessToken, engineNamespace, deploymentUrl, bypassSecret);
@@ -801,7 +801,7 @@ async function main() {
 		console.log(`  Dashboard: ${dashboardUrl}`);
 		await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Ready | [Dashboard](${dashboardUrl}) |`
+			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Ready | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
 		);
 	} catch (error: any) {
 		console.error("Error:", error);
