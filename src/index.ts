@@ -323,6 +323,161 @@ async function updateComment(commentId: number | null, body: string): Promise<nu
 	}
 }
 
+// Find and cancel in-progress Vercel deployment for a branch
+async function cancelVercelDeployment(branch: string): Promise<string | null> {
+	const teamQuery = VERCEL_TEAM_ID ? `teamId=${VERCEL_TEAM_ID}` : "";
+
+	console.log(`  Looking for in-progress deployment for branch: ${branch}`);
+
+	const response = await fetch(
+		`https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID}&${teamQuery}&limit=10`,
+		{
+			headers: {
+				Authorization: `Bearer ${VERCEL_TOKEN}`,
+			},
+		}
+	);
+
+	const { deployments } = await response.json();
+
+	// Find in-progress deployment for this branch
+	const inProgressDeployment = deployments?.find((d: any) =>
+		d.meta?.githubCommitRef === branch &&
+		(d.state === "BUILDING" || d.state === "INITIALIZING" || d.state === "QUEUED")
+	);
+
+	if (!inProgressDeployment) {
+		console.log("  No in-progress deployment found");
+		return null;
+	}
+
+	console.log(`  Found in-progress deployment: ${inProgressDeployment.uid} (state: ${inProgressDeployment.state})`);
+
+	// Cancel the deployment
+	const cancelResponse = await fetch(
+		`https://api.vercel.com/v13/deployments/${inProgressDeployment.uid}/cancel?${teamQuery}`,
+		{
+			method: "PATCH",
+			headers: {
+				Authorization: `Bearer ${VERCEL_TOKEN}`,
+			},
+		}
+	);
+
+	if (!cancelResponse.ok) {
+		const text = await cancelResponse.text();
+		console.log(`  Failed to cancel deployment: ${cancelResponse.status} ${text}`);
+		return null;
+	}
+
+	console.log("  Canceled deployment");
+	return inProgressDeployment.uid;
+}
+
+// Trigger a Vercel redeploy
+async function triggerVercelRedeploy(branch: string): Promise<string> {
+	const teamQuery = VERCEL_TEAM_ID ? `teamId=${VERCEL_TEAM_ID}` : "";
+
+	// First, find the latest deployment for this branch to use as source
+	const listResponse = await fetch(
+		`https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID}&${teamQuery}&limit=10`,
+		{
+			headers: {
+				Authorization: `Bearer ${VERCEL_TOKEN}`,
+			},
+		}
+	);
+
+	const { deployments } = await listResponse.json();
+
+	// Find the most recent deployment for this branch (any state)
+	const sourceDeployment = deployments?.find((d: any) =>
+		d.meta?.githubCommitRef === branch
+	);
+
+	if (!sourceDeployment) {
+		throw new Error(`No deployment found for branch ${branch} to redeploy`);
+	}
+
+	console.log(`  Using deployment ${sourceDeployment.uid} as source for redeploy`);
+
+	// Trigger redeploy
+	const redeployResponse = await fetch(
+		`https://api.vercel.com/v13/deployments?forceNew=1&${teamQuery}`,
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${VERCEL_TOKEN}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				deploymentId: sourceDeployment.uid,
+				meta: { action: "redeploy" },
+				name: VERCEL_PROJECT_NAME,
+			}),
+		}
+	);
+
+	if (!redeployResponse.ok) {
+		const text = await redeployResponse.text();
+		throw new Error(`Failed to trigger redeploy: ${redeployResponse.status} ${text}`);
+	}
+
+	const result = await redeployResponse.json();
+	console.log(`  Triggered redeploy: ${result.id}`);
+	return result.id;
+}
+
+// Wait for a Vercel deployment to be ready
+async function waitForVercelDeployment(deploymentId: string, maxWaitMs: number = 180000): Promise<string> {
+	const teamQuery = VERCEL_TEAM_ID ? `teamId=${VERCEL_TEAM_ID}` : "";
+	const startTime = Date.now();
+
+	while (Date.now() - startTime < maxWaitMs) {
+		const response = await fetch(
+			`https://api.vercel.com/v13/deployments/${deploymentId}?${teamQuery}`,
+			{
+				headers: {
+					Authorization: `Bearer ${VERCEL_TOKEN}`,
+				},
+			}
+		);
+
+		if (!response.ok) {
+			console.log("  Waiting for deployment info...");
+			await new Promise(resolve => setTimeout(resolve, 5000));
+			continue;
+		}
+
+		const deployment = await response.json();
+		console.log(`  Deployment state: ${deployment.readyState || deployment.state}`);
+
+		if (deployment.readyState === "READY" || deployment.state === "READY") {
+			// Get the branch alias
+			const branchAlias = deployment.alias?.find((a: string) =>
+				a.includes("-git-") && a.includes(VERCEL_PROJECT_NAME)
+			);
+
+			if (branchAlias) {
+				return branchAlias;
+			}
+
+			// Fall back to deployment URL
+			if (deployment.url) {
+				return deployment.url;
+			}
+		}
+
+		if (deployment.readyState === "ERROR" || deployment.state === "ERROR") {
+			throw new Error("Deployment failed");
+		}
+
+		await new Promise(resolve => setTimeout(resolve, 5000));
+	}
+
+	throw new Error("Timed out waiting for deployment to be ready");
+}
+
 // Get Vercel deployment URL for a branch (prefers stable branch alias over unique deployment URL)
 async function getVercelDeploymentUrl(branch: string, maxWaitMs: number = 120000): Promise<string> {
 	const teamQuery = VERCEL_TEAM_ID ? `teamId=${VERCEL_TEAM_ID}` : "";
@@ -798,16 +953,30 @@ async function main() {
 
 		console.log("  Done setting env vars");
 
-		// Step 7: Wait for platform deployment and configure runner
+		// Step 7: Cancel in-progress deployment and trigger redeploy
 		console.log("");
-		console.log(`Step 7: Waiting for ${PLATFORM} deployment...`);
+		console.log(`Step 7: Triggering ${PLATFORM} redeploy with new env vars...`);
 		commentId = await updateComment(
 			commentId,
-			rivetDataTag + "\n" + intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Waiting for ${PLATFORM}... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
+			rivetDataTag + "\n" + intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Redeploying ${PLATFORM}... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
 		);
 
-		const deploymentUrl = await getPlatformDeploymentUrl(BRANCH_NAME);
-		console.log(`  Got ${PLATFORM} deployment URL: ${deploymentUrl}`);
+		let deploymentUrl: string;
+		if (PLATFORM === "vercel") {
+			// Cancel any in-progress deployment first
+			await cancelVercelDeployment(BRANCH_NAME);
+
+			// Trigger a fresh redeploy with the new env vars
+			const newDeploymentId = await triggerVercelRedeploy(BRANCH_NAME);
+
+			// Wait for the new deployment to be ready
+			console.log("  Waiting for redeploy to complete...");
+			deploymentUrl = await waitForVercelDeployment(newDeploymentId);
+		} else {
+			// For other platforms, just wait for deployment
+			deploymentUrl = await getPlatformDeploymentUrl(BRANCH_NAME);
+		}
+		console.log(`  ${PLATFORM} deployment ready: ${deploymentUrl}`);
 
 		// Step 8: Configure runner for all regions
 		console.log("");
