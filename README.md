@@ -27,6 +27,7 @@ jobs:
     steps:
       - uses: rivet-dev/preview-namespace-action@v1
         with:
+          platform: vercel
           rivet-token: ${{ secrets.RIVET_CLOUD_TOKEN }}
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
 ```
@@ -45,7 +46,7 @@ jobs:
 
 | Input | Required | Default | Description |
 |:------|:---------|:--------|:------------|
-| `platform` | No | `vercel` | Deployment platform (currently only `vercel` is supported) |
+| `platform` | Yes | - | Deployment platform (currently only `vercel` is supported) |
 | `rivet-token` | Yes | - | Rivet Cloud API token |
 | `vercel-token` | When platform is `vercel` | - | Vercel API token |
 | `rivet-endpoint` | No | `https://api.rivet.dev` | Rivet Engine API endpoint |
@@ -55,7 +56,7 @@ jobs:
 
 ## Runner Configuration
 
-The `runner-config` input accepts a JSON object that is passed directly to the Rivet API. Any properties you specify will override the defaults.
+The `runner-config` input accepts a JSON object that is passed directly to the Rivet API. Any properties you specify will override the defaults. See the [Rivet documentation](https://rivet.dev/docs/connect/freestyle#configure-runner) for all available options.
 
 **Default values:**
 
@@ -73,6 +74,7 @@ The `runner-config` input accepts a JSON object that is passed directly to the R
 ```yaml
 - uses: rivet-dev/preview-namespace-action@v1
   with:
+    platform: vercel
     rivet-token: ${{ secrets.RIVET_CLOUD_TOKEN }}
     vercel-token: ${{ secrets.VERCEL_TOKEN }}
     runner-config: '{"max_runners": 1000, "min_runners": 1}'
@@ -99,6 +101,7 @@ gh secret set VERCEL_AUTOMATION_BYPASS_SECRET
 ```yaml
 - uses: rivet-dev/preview-namespace-action@v1
   with:
+    platform: vercel
     rivet-token: ${{ secrets.RIVET_CLOUD_TOKEN }}
     vercel-token: ${{ secrets.VERCEL_TOKEN }}
     runner-config: '{"headers": {"x-vercel-protection-bypass": "${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}"}}'
@@ -113,6 +116,7 @@ If your main branch is not named `main`, configure it:
 ```yaml
 - uses: rivet-dev/preview-namespace-action@v1
   with:
+    platform: vercel
     rivet-token: ${{ secrets.RIVET_CLOUD_TOKEN }}
     vercel-token: ${{ secrets.VERCEL_TOKEN }}
     main-branch: master
