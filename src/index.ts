@@ -454,6 +454,76 @@ async function setVercelEnvVar(
 	}
 }
 
+// Create or get Vercel protection bypass secret
+async function getOrCreateVercelBypassSecret(): Promise<string | null> {
+	const teamQuery = VERCEL_TEAM_ID ? `?teamId=${VERCEL_TEAM_ID}` : "";
+
+	// First, check if a bypass secret already exists with our note
+	const getResponse = await fetch(
+		`https://api.vercel.com/v1/projects/${VERCEL_PROJECT_ID}/protection-bypass${teamQuery}`,
+		{
+			headers: {
+				Authorization: `Bearer ${VERCEL_TOKEN}`,
+			},
+		}
+	);
+
+	if (getResponse.ok) {
+		const data = await getResponse.json();
+		const existing = Object.entries(data.protectionBypass || {}).find(
+			([_, value]: [string, any]) => value.note === "Rivet automation"
+		);
+		if (existing) {
+			console.log("  Found existing bypass secret");
+			return existing[0];
+		}
+	}
+
+	// Create a new bypass secret
+	console.log("  Creating Vercel bypass secret...");
+	const response = await fetch(
+		`https://api.vercel.com/v1/projects/${VERCEL_PROJECT_ID}/protection-bypass${teamQuery}`,
+		{
+			method: "PATCH",
+			headers: {
+				Authorization: `Bearer ${VERCEL_TOKEN}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ note: "Rivet automation" }),
+		}
+	);
+
+	if (!response.ok) {
+		const text = await response.text();
+		console.log(`  Could not create bypass secret: ${response.status} ${text}`);
+		return null;
+	}
+
+	const result = await response.json();
+
+	// Find the secret we just created
+	const newSecret = Object.entries(result.protectionBypass || {}).find(
+		([_, value]: [string, any]) => value.note === "Rivet automation"
+	);
+
+	if (newSecret) {
+		console.log("  Created bypass secret");
+		return newSecret[0];
+	}
+
+	return null;
+}
+
+// Platform-specific bypass secret getter
+async function getPlatformBypassSecret(): Promise<string | null> {
+	switch (PLATFORM) {
+		case "vercel":
+			return await getOrCreateVercelBypassSecret();
+		default:
+			return null;
+	}
+}
+
 // Platform-specific env var setter
 async function setPlatformEnvVars(
 	endpoint: string,
@@ -484,17 +554,24 @@ async function getDatacenters(accessToken: string): Promise<string[]> {
 async function configureRunners(
 	accessToken: string,
 	namespace: string,
-	deploymentUrl: string
+	deploymentUrl: string,
+	bypassSecret: string | null
 ): Promise<void> {
 	// Get all available datacenters
 	console.log("  Fetching available datacenters...");
 	const datacenterNames = await getDatacenters(accessToken);
 	console.log(`  Found ${datacenterNames.length} datacenters: ${datacenterNames.join(", ")}`);
 
+	// Build headers with bypass secret if available
+	const headers: Record<string, string> = {};
+	if (bypassSecret) {
+		headers["x-vercel-protection-bypass"] = bypassSecret;
+	}
+
 	// Build the serverless config with defaults, then apply any overrides
-	const serverlessConfig = {
+	const serverlessConfig: Record<string, any> = {
 		url: `https://${deploymentUrl}/api/rivet`,
-		headers: {},
+		headers,
 		min_runners: 0,
 		max_runners: 100000,
 		slots_per_runner: 1,
@@ -503,6 +580,11 @@ async function configureRunners(
 		// Apply any overrides from runner-config
 		...RUNNER_CONFIG,
 	};
+
+	// Merge headers from RUNNER_CONFIG with bypass header
+	if (RUNNER_CONFIG.headers) {
+		serverlessConfig.headers = { ...headers, ...RUNNER_CONFIG.headers };
+	}
 
 	// Ensure URL is always set correctly (can't be overridden)
 	serverlessConfig.url = `https://${deploymentUrl}/api/rivet`;
@@ -693,19 +775,24 @@ async function main() {
 		const deploymentUrl = await getPlatformDeploymentUrl(BRANCH_NAME);
 		console.log(`  Got ${PLATFORM} deployment URL: ${deploymentUrl}`);
 
-		// Step 7: Configure runner for all regions
+		// Step 7: Get bypass secret for deployment protection
 		console.log("");
-		console.log("Step 7: Configuring Rivet runners...");
+		console.log("Step 7: Configuring deployment protection bypass...");
+		const bypassSecret = await getPlatformBypassSecret();
+
+		// Step 8: Configure runner for all regions
+		console.log("");
+		console.log("Step 8: Configuring Rivet runners...");
 		commentId = await updateComment(
 			commentId,
 			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Configuring runners... | [Dashboard](${dashboardUrl}) |`
 		);
 
-		await configureRunners(accessToken, engineNamespace, deploymentUrl);
+		await configureRunners(accessToken, engineNamespace, deploymentUrl, bypassSecret);
 
 		console.log("  Runners configured");
 
-		// Step 8: Success!
+		// Step 9: Success!
 		console.log("");
 		console.log("=== Success! ===");
 		console.log(`  Namespace: ${namespace.name}`);
