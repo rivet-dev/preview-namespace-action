@@ -20,6 +20,24 @@ inputs:
     description: 'GitHub token for PR comments'
     required: false
     default: ${{ github.token }}
+  main-branch:
+    description: 'Main branch name for production deployments'
+    required: false
+    default: 'main'
+  runner-config:
+    description: |
+      JSON object to override runner configuration. Available options:
+      - max_runners: Maximum concurrent runners (default: 100000)
+      - min_runners: Minimum runners to keep warm (default: 0)
+      - request_lifespan: Request timeout in seconds (default: 270)
+      - slots_per_runner: Slots per runner instance (default: 1)
+      - runners_margin: Runner margin for scaling (default: 0)
+      - headers: Custom headers for Vercel requests (useful for auth bypass)
+
+      Example for private Vercel deployments with auth bypass:
+      runner-config: '{"headers": {"x-vercel-protection-bypass": "${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}"}}'
+    required: false
+    default: '{}'
 
 runs:
   using: 'composite'
@@ -39,4 +57,6 @@ runs:
         BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
         REPO_FULL_NAME: ${{ github.repository }}
         RUN_ID: ${{ github.run_id }}
+        MAIN_BRANCH: ${{ inputs.main-branch }}
+        RUNNER_CONFIG: ${{ inputs.runner-config }}
       run: bun run ${{ github.action_path }}/src/index.ts

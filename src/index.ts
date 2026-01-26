@@ -8,9 +8,30 @@ const PR_NUMBER = process.env.PR_NUMBER; // Optional - not set for push to main
 const BRANCH_NAME = process.env.BRANCH_NAME || "main";
 const REPO_FULL_NAME = process.env.REPO_FULL_NAME!;
 const RUN_ID = process.env.RUN_ID!;
+const MAIN_BRANCH = process.env.MAIN_BRANCH || "main";
+
+// Runner config overrides (parsed from JSON)
+interface RunnerConfigOverrides {
+	max_runners?: number;
+	min_runners?: number;
+	request_lifespan?: number;
+	slots_per_runner?: number;
+	runners_margin?: number;
+	headers?: Record<string, string>;
+}
+
+const RUNNER_CONFIG: RunnerConfigOverrides = (() => {
+	try {
+		return JSON.parse(process.env.RUNNER_CONFIG || "{}");
+	} catch (e) {
+		console.error("Failed to parse RUNNER_CONFIG:", e);
+		return {};
+	}
+})();
 
 // Determine if this is a PR or main branch
 const IS_PR = !!PR_NUMBER;
+const IS_MAIN = BRANCH_NAME === MAIN_BRANCH;
 const NAMESPACE_NAME = IS_PR ? `pr-${PR_NUMBER}` : "production";
 
 const COMMENT_MARKER = "<!-- rivet-preview-status -->";
@@ -147,6 +168,27 @@ async function rivetCloudFetch(path: string, options: RequestInit = {}): Promise
 	if (!response.ok) {
 		const text = await response.text();
 		throw new Error(`Rivet Cloud API error: ${response.status} ${text}`);
+	}
+
+	return response.json();
+}
+
+// Rivet Engine API helpers
+async function rivetEngineFetch(path: string, accessToken: string, options: RequestInit = {}): Promise<any> {
+	const url = `${RIVET_ENGINE_ENDPOINT}${path}`;
+
+	const response = await fetch(url, {
+		...options,
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			"Content-Type": "application/json",
+			...options.headers,
+		},
+	});
+
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(`Rivet Engine API error: ${response.status} ${text}`);
 	}
 
 	return response.json();
@@ -298,7 +340,7 @@ async function setVercelEnvVar(
 	branch: string
 ): Promise<void> {
 	const teamQuery = VERCEL_TEAM_ID ? `teamId=${VERCEL_TEAM_ID}` : "";
-	const isProduction = !IS_PR;
+	const isProduction = IS_MAIN;
 	const target = isProduction ? ["production"] : ["preview"];
 
 	console.log(`Setting env var: ${key} (target: ${target.join(",")}, branch: ${isProduction ? "N/A" : branch})`);
@@ -373,50 +415,75 @@ async function setVercelEnvVar(
 	}
 }
 
-// Rivet Engine API helper
-async function configureRunner(
-	endpoint: string,
+// Fetch available datacenters from Rivet Engine API
+async function getDatacenters(accessToken: string): Promise<string[]> {
+	const { datacenters } = await rivetEngineFetch("/datacenters", accessToken);
+	return datacenters.map((dc: any) => dc.name);
+}
+
+// Configure runner for all datacenters
+async function configureRunners(
 	accessToken: string,
 	namespace: string,
 	vercelUrl: string
 ): Promise<void> {
-	const response = await fetch(`${endpoint}/runner-configs/us-west-1?namespace=${namespace}`, {
+	// Get all available datacenters
+	console.log("  Fetching available datacenters...");
+	const datacenterNames = await getDatacenters(accessToken);
+	console.log(`  Found ${datacenterNames.length} datacenters: ${datacenterNames.join(", ")}`);
+
+	// Build the serverless config with defaults and overrides
+	const serverlessConfig = {
+		url: `https://${vercelUrl}/api/rivet`,
+		headers: RUNNER_CONFIG.headers || {},
+		min_runners: RUNNER_CONFIG.min_runners ?? 0,
+		max_runners: RUNNER_CONFIG.max_runners ?? 100000,
+		slots_per_runner: RUNNER_CONFIG.slots_per_runner ?? 1,
+		request_lifespan: RUNNER_CONFIG.request_lifespan ?? 270,
+		runners_margin: RUNNER_CONFIG.runners_margin ?? 0,
+	};
+
+	console.log("  Runner config:", JSON.stringify(serverlessConfig, null, 2));
+
+	// Build datacenters config for all regions
+	const datacentersConfig: Record<string, any> = {};
+	for (const dc of datacenterNames) {
+		datacentersConfig[dc] = {
+			serverless: serverlessConfig,
+		};
+	}
+
+	// Configure runner for all datacenters at once
+	const response = await fetch(`${RIVET_ENGINE_ENDPOINT}/runner-configs/default?namespace=${namespace}`, {
 		method: "PUT",
 		headers: {
 			Authorization: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
-		body: JSON.stringify({
-			datacenters: {
-				"us-west-1": {
-					serverless: {
-						url: `https://${vercelUrl}/api/rivet`,
-						headers: {},
-						min_runners: 0,
-						max_runners: 1000,
-						slots_per_runner: 1,
-						request_lifespan: 300,
-						runners_margin: 0,
-					},
-				},
-			},
-		}),
+		body: JSON.stringify({ datacenters: datacentersConfig }),
 	});
 
 	if (!response.ok) {
 		const text = await response.text();
-		throw new Error(`Failed to configure runner: ${response.status} ${text}`);
+		throw new Error(`Failed to configure runners: ${response.status} ${text}`);
 	}
+
+	console.log(`  Configured runners for ${datacenterNames.length} datacenters`);
 }
 
 // Main flow
 async function main() {
 	console.log("=== Rivet Preview Action ===");
-	console.log(`Mode: ${IS_PR ? `PR #${PR_NUMBER}` : "Production (main branch)"}`);
+	console.log(`Mode: ${IS_PR ? `PR #${PR_NUMBER}` : `Production (${MAIN_BRANCH} branch)`}`);
 	console.log(`Branch: ${BRANCH_NAME}`);
+	console.log(`Main branch: ${MAIN_BRANCH}`);
+	console.log(`Is main: ${IS_MAIN}`);
 	console.log(`Repo: ${REPO_FULL_NAME}`);
 	console.log(`Namespace: ${NAMESPACE_NAME}`);
 	console.log(`Rivet Engine Endpoint: ${RIVET_ENGINE_ENDPOINT}`);
+	if (Object.keys(RUNNER_CONFIG).length > 0) {
+		console.log(`Runner config overrides: ${JSON.stringify(RUNNER_CONFIG)}`);
+	}
 	console.log("");
 
 	const runLogsUrl = `https://github.com/${REPO_FULL_NAME}/actions/runs/${RUN_ID}`;
@@ -455,6 +522,16 @@ async function main() {
 		const displayName = title.substring(0, 16);
 		console.log(`  Display name: "${displayName}" (from: "${title}")`);
 
+		// Namespace metadata
+		const namespaceMetadata = {
+			skipOnboarding: true,
+			provider: "vercel",
+			vercelProject: VERCEL_PROJECT_NAME,
+			...(IS_PR ? { prNumber: PR_NUMBER } : {}),
+			...(IS_MAIN ? { isProduction: true } : {}),
+		};
+		console.log(`  Metadata: ${JSON.stringify(namespaceMetadata)}`);
+
 		try {
 			console.log(`  Listing existing namespaces...`);
 			const { namespaces } = await rivetCloudFetch(`/projects/${project}/namespaces?org=${organization}&limit=100`);
@@ -475,10 +552,7 @@ async function main() {
 					body: JSON.stringify({
 						name: NAMESPACE_NAME,
 						displayName,
-						metadata: {
-							skipOnboarding: true,
-							provider: "vercel",
-						},
+						metadata: namespaceMetadata,
 					}),
 				});
 				namespace = result.namespace;
@@ -493,10 +567,7 @@ async function main() {
 				body: JSON.stringify({
 					name: NAMESPACE_NAME,
 					displayName,
-					metadata: {
-						skipOnboarding: true,
-						provider: "vercel",
-					},
+					metadata: namespaceMetadata,
 				}),
 			});
 			namespace = result.namespace;
@@ -554,17 +625,17 @@ async function main() {
 		const vercelUrl = await getVercelDeploymentUrl(BRANCH_NAME);
 		console.log(`  Got Vercel deployment URL: ${vercelUrl}`);
 
-		// Step 7: Configure runner
+		// Step 7: Configure runner for all regions
 		console.log("");
-		console.log("Step 7: Configuring Rivet runner...");
+		console.log("Step 7: Configuring Rivet runners...");
 		commentId = await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${VERCEL_PROJECT_NAME}\` | \`${namespace.name}\` | Configuring runner... | [Dashboard](${dashboardUrl}) |`
+			intro + tableHeader + `| \`${VERCEL_PROJECT_NAME}\` | \`${namespace.name}\` | Configuring runners... | [Dashboard](${dashboardUrl}) |`
 		);
 
-		await configureRunner(RIVET_ENGINE_ENDPOINT, accessToken, engineNamespace, vercelUrl);
+		await configureRunners(accessToken, engineNamespace, vercelUrl);
 
-		console.log("  Runner configured");
+		console.log("  Runners configured");
 
 		// Step 8: Success!
 		console.log("");
