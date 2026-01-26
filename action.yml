@@ -1,0 +1,42 @@
+name: 'Rivet Vercel Preview'
+description: 'Automatically create Rivet namespaces for Vercel preview deployments'
+author: 'Rivet'
+branding:
+  icon: 'server'
+  color: 'orange'
+
+inputs:
+  rivet-token:
+    description: 'Rivet Cloud API token'
+    required: true
+  vercel-token:
+    description: 'Vercel API token'
+    required: true
+  rivet-endpoint:
+    description: 'Rivet Engine API endpoint'
+    required: false
+    default: 'https://api.rivet.dev'
+  github-token:
+    description: 'GitHub token for PR comments'
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
+
+    - name: Setup Rivet Preview
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        RIVET_CLOUD_TOKEN: ${{ inputs.rivet-token }}
+        RIVET_ENGINE_ENDPOINT: ${{ inputs.rivet-endpoint }}
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+        BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+        REPO_FULL_NAME: ${{ github.repository }}
+        RUN_ID: ${{ github.run_id }}
+      run: bun run ${{ github.action_path }}/src/index.ts
