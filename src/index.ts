@@ -46,6 +46,33 @@ const NAMESPACE_NAME = IS_PR ? `pr-${PR_NUMBER}` : "production";
 
 const COMMENT_MARKER = "<!-- rivet-preview-status -->";
 
+// Rivet data storage in comments
+interface RivetData {
+	namespace: string;
+	engineNamespace: string;
+}
+
+const RIVET_DATA_REGEX = /<!--\s*<rivet-data>([\s\S]*?)<\/rivet-data>\s*-->/;
+
+function parseRivetData(body: string): RivetData | null {
+	const match = body.match(RIVET_DATA_REGEX);
+	if (!match?.[1]) return null;
+
+	try {
+		const data = JSON.parse(match[1].trim());
+		if (typeof data.namespace === "string" && typeof data.engineNamespace === "string") {
+			return data;
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function buildRivetDataTag(data: RivetData): string {
+	return `<!-- <rivet-data>${JSON.stringify(data)}</rivet-data> -->`;
+}
+
 // Platform-specific project info
 let PROJECT_ID: string;
 let PROJECT_NAME: string;
@@ -224,7 +251,7 @@ async function rivetEngineFetch(path: string, accessToken: string, options: Requ
 }
 
 // GitHub API helpers
-async function getDisplayName(): Promise<string> {
+async function getPrTitle(): Promise<string> {
 	if (!IS_PR) {
 		return "Production";
 	}
@@ -238,10 +265,15 @@ async function getDisplayName(): Promise<string> {
 		}
 	);
 	const pr = await response.json();
-	return pr.title || `PR #${PR_NUMBER}`;
+	return pr.title || "";
 }
 
-async function findExistingComment(): Promise<number | null> {
+interface ExistingComment {
+	id: number;
+	body: string;
+}
+
+async function findExistingComment(): Promise<ExistingComment | null> {
 	if (!IS_PR) return null;
 
 	const response = await fetch(
@@ -259,7 +291,8 @@ async function findExistingComment(): Promise<number | null> {
 		return null;
 	}
 	const existing = comments.find((c: any) => c.body?.includes(COMMENT_MARKER));
-	return existing?.id ?? null;
+	if (!existing) return null;
+	return { id: existing.id, body: existing.body };
 }
 
 async function updateComment(commentId: number | null, body: string): Promise<number | null> {
@@ -372,7 +405,7 @@ async function getPlatformDeploymentUrl(branch: string): Promise<string> {
 	}
 }
 
-// Vercel API helpers
+// Vercel env var helpers
 async function setVercelEnvVar(
 	key: string,
 	value: string,
@@ -633,7 +666,14 @@ async function main() {
 	console.log("");
 
 	const runLogsUrl = `https://github.com/${REPO_FULL_NAME}/actions/runs/${RUN_ID}`;
-	let commentId = await findExistingComment();
+	const existingComment = await findExistingComment();
+	let commentId = existingComment?.id ?? null;
+
+	// Check for existing rivet data in comment
+	const existingRivetData = existingComment?.body ? parseRivetData(existingComment.body) : null;
+	if (existingRivetData) {
+		console.log(`Found existing namespace in comment: ${existingRivetData.namespace}`);
+	}
 
 	try {
 		// Step 1: Detect platform project
@@ -657,16 +697,19 @@ async function main() {
 		console.log(`  Project: ${project}`);
 		console.log(`  Organization: ${organization}`);
 
-		// Check if namespace exists, create if not
+		// Get or create namespace
 		let namespace: any;
 		let engineNamespace: string;
 
-		// Get display name (16 chars max per cloud API)
+		// Get PR title for display name
 		console.log("");
 		console.log("Step 3: Creating/finding namespace...");
-		const title = await getDisplayName();
-		const displayName = title.substring(0, 16);
-		console.log(`  Display name: "${displayName}" (from: "${title}")`);
+		const prTitle = await getPrTitle();
+		// Format: "#14: Fix bug" (16 char limit)
+		const displayName = IS_PR
+			? `#${PR_NUMBER}: ${prTitle}`.substring(0, 16)
+			: "Production";
+		console.log(`  Display name: "${displayName}"`);
 
 		// Namespace metadata
 		const namespaceMetadata: Record<string, any> = {
@@ -684,36 +727,18 @@ async function main() {
 		}
 		console.log(`  Metadata: ${JSON.stringify(namespaceMetadata)}`);
 
-		try {
-			console.log(`  Listing existing namespaces...`);
-			const { namespaces } = await rivetCloudFetch(`/projects/${project}/namespaces?org=${organization}&limit=100`);
-			console.log(`  Found ${namespaces?.length || 0} namespaces`);
-			// Match by namespace name pattern
-			const existing = namespaces?.find((ns: any) => ns.name.startsWith(`${NAMESPACE_NAME}-`));
-
-			if (existing) {
-				// Reuse existing namespace - fetch full details
-				const { namespace: fullNs } = await rivetCloudFetch(`/projects/${project}/namespaces/${existing.name}?org=${organization}`);
-				namespace = fullNs;
-				engineNamespace = namespace.access?.engineNamespaceName || namespace.name;
-				console.log(`Reusing existing namespace ${namespace.name}`);
-			} else {
-				// Create new namespace
-				const result = await rivetCloudFetch(`/projects/${project}/namespaces?org=${organization}`, {
-					method: "POST",
-					body: JSON.stringify({
-						name: NAMESPACE_NAME,
-						displayName,
-						metadata: namespaceMetadata,
-					}),
-				});
-				namespace = result.namespace;
-				engineNamespace = namespace.access?.engineNamespaceName || namespace.name;
-				console.log(`Created namespace ${namespace.name} (${displayName})`);
-			}
-		} catch (e: any) {
-			console.log(`Error listing namespaces, trying to create: ${e.message}`);
-			// If list fails, try to create
+		if (existingRivetData) {
+			// Reuse existing namespace from comment
+			console.log(`  Fetching existing namespace: ${existingRivetData.namespace}`);
+			const { namespace: fullNs } = await rivetCloudFetch(
+				`/projects/${project}/namespaces/${existingRivetData.namespace}?org=${organization}`
+			);
+			namespace = fullNs;
+			engineNamespace = existingRivetData.engineNamespace;
+			console.log(`  Reusing namespace: ${namespace.name}`);
+		} else {
+			// Create new namespace
+			console.log(`  Creating new namespace: ${NAMESPACE_NAME}`);
 			const result = await rivetCloudFetch(`/projects/${project}/namespaces?org=${organization}`, {
 				method: "POST",
 				body: JSON.stringify({
@@ -724,7 +749,7 @@ async function main() {
 			});
 			namespace = result.namespace;
 			engineNamespace = namespace.access?.engineNamespaceName || namespace.name;
-			console.log(`Created namespace ${namespace.name} (${displayName})`);
+			console.log(`  Created namespace: ${namespace.name}`);
 		}
 
 		// Create tokens (always create fresh ones)
@@ -754,9 +779,16 @@ async function main() {
 		console.log("");
 		console.log(`Step 5: Setting ${PLATFORM} environment variables...`);
 		const dashboardUrl = `https://dashboard.rivet.dev/orgs/${organization}/projects/${project}/ns/${namespace.name}?skipOnboarding=1`;
+
+		// Build rivet data tag for comment
+		const rivetDataTag = buildRivetDataTag({
+			namespace: namespace.name,
+			engineNamespace,
+		});
+
 		commentId = await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Configuring ${PLATFORM}... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
+			rivetDataTag + "\n" + intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Configuring ${PLATFORM}... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
 		);
 
 		await setPlatformEnvVars(RIVET_ENGINE_ENDPOINT, engineNamespace, secretToken, publishableToken, BRANCH_NAME);
@@ -768,7 +800,7 @@ async function main() {
 		console.log(`Step 6: Waiting for ${PLATFORM} deployment...`);
 		commentId = await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Waiting for ${PLATFORM}... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
+			rivetDataTag + "\n" + intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Waiting for ${PLATFORM}... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
 		);
 
 		const deploymentUrl = await getPlatformDeploymentUrl(BRANCH_NAME);
@@ -784,7 +816,7 @@ async function main() {
 		console.log("Step 8: Configuring Rivet runners...");
 		commentId = await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Configuring runners... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
+			rivetDataTag + "\n" + intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Configuring runners... | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
 		);
 
 		await configureRunners(accessToken, engineNamespace, deploymentUrl, bypassSecret);
@@ -800,7 +832,7 @@ async function main() {
 		console.log(`  Dashboard: ${dashboardUrl}`);
 		await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Ready | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
+			rivetDataTag + "\n" + intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Ready | <a href="${dashboardUrl}" target="_blank">Dashboard</a> |`
 		);
 	} catch (error: any) {
 		console.error("Error:", error);
