@@ -592,6 +592,9 @@ async function configureRunners(
 	for (const dc of datacenterNames) {
 		datacentersConfig[dc] = {
 			serverless: serverlessConfig,
+			metadata: {
+				provider: PLATFORM,
+			},
 		};
 	}
 
