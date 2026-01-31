@@ -3,7 +3,12 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN!;
 const RIVET_CLOUD_TOKEN = process.env.RIVET_CLOUD_TOKEN!;
 const RIVET_CLOUD_ENDPOINT = "https://cloud-api.rivet.dev";
 const RIVET_ENGINE_ENDPOINT = process.env.RIVET_ENGINE_ENDPOINT || "https://api.rivet.dev";
-const PLATFORM = process.env.PLATFORM || "vercel";
+const PLATFORM = process.env.PLATFORM;
+
+if (!PLATFORM) {
+	console.error("platform input is required");
+	process.exit(1);
+}
 const VERCEL_TOKEN = process.env.VERCEL_TOKEN;
 const PR_NUMBER = process.env.PR_NUMBER; // Optional - not set for push to main
 const BRANCH_NAME = process.env.BRANCH_NAME || "main";
