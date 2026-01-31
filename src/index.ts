@@ -596,13 +596,15 @@ async function configureRunners(
 	}
 
 	// Configure runner for all datacenters at once
+	const requestBody = { datacenters: datacentersConfig };
+	console.log("  PUT /runner-configs/default body:", JSON.stringify(requestBody, null, 2));
 	const response = await fetch(`${RIVET_ENGINE_ENDPOINT}/runner-configs/default?namespace=${namespace}`, {
 		method: "PUT",
 		headers: {
 			Authorization: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
-		body: JSON.stringify({ datacenters: datacentersConfig }),
+		body: JSON.stringify(requestBody),
 	});
 
 	if (!response.ok) {
