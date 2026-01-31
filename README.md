@@ -53,8 +53,4 @@ Get your token from [Vercel Account Settings](https://vercel.com/account/tokens)
 gh secret set VERCEL_TOKEN
 ```
 
-**Private deployments:** If Vercel Authentication is enabled, create a bypass secret in Vercel (Project Settings → Deployment Protection → Protection Bypass for Automation) and configure:
-
-```yaml
-runner-config: '{"headers": {"x-vercel-protection-bypass": "${{ secrets.VERCEL_BYPASS_SECRET }}"}}'
-```
+<!-- Deployment protection bypass is automatically configured via the Vercel API -->
