@@ -298,8 +298,12 @@ async function setVercelEnvVar(
 	branch: string
 ): Promise<void> {
 	const teamQuery = VERCEL_TEAM_ID ? `teamId=${VERCEL_TEAM_ID}` : "";
+	const isProduction = !IS_PR;
+	const target = isProduction ? ["production"] : ["preview"];
 
-	// Check if env var exists for this branch
+	console.log(`Setting env var: ${key} (target: ${target.join(",")}, branch: ${isProduction ? "N/A" : branch})`);
+
+	// Check if env var exists
 	const listResponse = await fetch(
 		`https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}/env?${teamQuery}`,
 		{
@@ -310,16 +314,20 @@ async function setVercelEnvVar(
 	);
 	const { envs } = await listResponse.json();
 
-	const existing = envs?.find(
-		(e: any) =>
-			e.key === key &&
-			e.target?.includes("preview") &&
-			e.gitBranch === branch
-	);
+	// For production, match by target only; for preview, also match gitBranch
+	const existing = envs?.find((e: any) => {
+		if (e.key !== key) return false;
+		if (isProduction) {
+			return e.target?.includes("production");
+		} else {
+			return e.target?.includes("preview") && e.gitBranch === branch;
+		}
+	});
 
 	if (existing) {
 		// Update existing
-		await fetch(
+		console.log(`  Updating existing env var (id: ${existing.id})`);
+		const response = await fetch(
 			`https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}/env/${existing.id}?${teamQuery}`,
 			{
 				method: "PATCH",
@@ -330,9 +338,24 @@ async function setVercelEnvVar(
 				body: JSON.stringify({ value }),
 			}
 		);
+		if (!response.ok) {
+			const text = await response.text();
+			console.error(`  Failed to update env var: ${response.status} ${text}`);
+		}
 	} else {
 		// Create new
-		await fetch(
+		console.log(`  Creating new env var`);
+		const envBody: any = {
+			key,
+			value,
+			type: "encrypted",
+			target,
+		};
+		// Only set gitBranch for preview deployments
+		if (!isProduction) {
+			envBody.gitBranch = branch;
+		}
+		const response = await fetch(
 			`https://api.vercel.com/v10/projects/${VERCEL_PROJECT_ID}/env?${teamQuery}`,
 			{
 				method: "POST",
@@ -340,15 +363,13 @@ async function setVercelEnvVar(
 					Authorization: `Bearer ${VERCEL_TOKEN}`,
 					"Content-Type": "application/json",
 				},
-				body: JSON.stringify({
-					key,
-					value,
-					type: "encrypted",
-					target: ["preview"],
-					gitBranch: branch,
-				}),
+				body: JSON.stringify(envBody),
 			}
 		);
+		if (!response.ok) {
+			const text = await response.text();
+			console.error(`  Failed to create env var: ${response.status} ${text}`);
+		}
 	}
 }
 
@@ -390,11 +411,20 @@ async function configureRunner(
 
 // Main flow
 async function main() {
+	console.log("=== Rivet Preview Action ===");
+	console.log(`Mode: ${IS_PR ? `PR #${PR_NUMBER}` : "Production (main branch)"}`);
+	console.log(`Branch: ${BRANCH_NAME}`);
+	console.log(`Repo: ${REPO_FULL_NAME}`);
+	console.log(`Namespace: ${NAMESPACE_NAME}`);
+	console.log(`Rivet Engine Endpoint: ${RIVET_ENGINE_ENDPOINT}`);
+	console.log("");
+
 	const runLogsUrl = `https://github.com/${REPO_FULL_NAME}/actions/runs/${RUN_ID}`;
 	let commentId = await findExistingComment();
 
 	try {
 		// Auto-detect Vercel project info
+		console.log("Step 1: Detecting Vercel project...");
 		await getVercelProjectInfo();
 
 		// Step 1: Creating namespace
@@ -408,18 +438,27 @@ async function main() {
 		);
 
 		// Get project/org info from token
+		console.log("");
+		console.log("Step 2: Inspecting Rivet token...");
 		const { project, organization } = await rivetCloudFetch("/tokens/api/inspect");
+		console.log(`  Project: ${project}`);
+		console.log(`  Organization: ${organization}`);
 
 		// Check if namespace exists, create if not
 		let namespace: any;
 		let engineNamespace: string;
 
 		// Get display name (16 chars max per cloud API)
+		console.log("");
+		console.log("Step 3: Creating/finding namespace...");
 		const title = await getDisplayName();
 		const displayName = title.substring(0, 16);
+		console.log(`  Display name: "${displayName}" (from: "${title}")`);
 
 		try {
+			console.log(`  Listing existing namespaces...`);
 			const { namespaces } = await rivetCloudFetch(`/projects/${project}/namespaces?org=${organization}&limit=100`);
+			console.log(`  Found ${namespaces?.length || 0} namespaces`);
 			// Match by namespace name pattern
 			const existing = namespaces?.find((ns: any) => ns.name.startsWith(`${NAMESPACE_NAME}-`));
 
@@ -466,6 +505,8 @@ async function main() {
 		}
 
 		// Create tokens (always create fresh ones)
+		console.log("");
+		console.log("Step 4: Creating tokens...");
 		const { token: secretToken } = await rivetCloudFetch(
 			`/projects/${project}/namespaces/${namespace.name}/tokens/secret?org=${organization}`,
 			{
@@ -484,9 +525,11 @@ async function main() {
 			{ method: "POST", body: JSON.stringify({}) }
 		);
 
-		console.log("Created tokens");
+		console.log("  Created: secret, publishable, and access tokens");
 
-		// Step 2: Configure Vercel env vars
+		// Step 5: Configure Vercel env vars
+		console.log("");
+		console.log("Step 5: Setting Vercel environment variables...");
 		const dashboardUrl = `https://dashboard.rivet.dev/orgs/${organization}/projects/${project}/ns/${namespace.name}?skipOnboarding=1`;
 		commentId = await updateComment(
 			commentId,
@@ -498,17 +541,22 @@ async function main() {
 		await setVercelEnvVar("RIVET_RUNNER_TOKEN", secretToken, BRANCH_NAME);
 		await setVercelEnvVar("RIVET_PUBLISHABLE_TOKEN", publishableToken, BRANCH_NAME);
 
-		console.log("Set Vercel env vars");
+		console.log("  Done setting env vars");
 
-		// Step 3: Wait for Vercel deployment and configure runner
+		// Step 6: Wait for Vercel deployment and configure runner
+		console.log("");
+		console.log("Step 6: Waiting for Vercel deployment...");
 		commentId = await updateComment(
 			commentId,
 			intro + tableHeader + `| \`${VERCEL_PROJECT_NAME}\` | \`${namespace.name}\` | Waiting for Vercel... | [Dashboard](${dashboardUrl}) |`
 		);
 
 		const vercelUrl = await getVercelDeploymentUrl(BRANCH_NAME);
-		console.log(`Got Vercel deployment URL: ${vercelUrl}`);
+		console.log(`  Got Vercel deployment URL: ${vercelUrl}`);
 
+		// Step 7: Configure runner
+		console.log("");
+		console.log("Step 7: Configuring Rivet runner...");
 		commentId = await updateComment(
 			commentId,
 			intro + tableHeader + `| \`${VERCEL_PROJECT_NAME}\` | \`${namespace.name}\` | Configuring runner... | [Dashboard](${dashboardUrl}) |`
@@ -516,15 +564,19 @@ async function main() {
 
 		await configureRunner(RIVET_ENGINE_ENDPOINT, accessToken, engineNamespace, vercelUrl);
 
-		console.log("Configured runner");
+		console.log("  Runner configured");
 
-		// Step 4: Success!
+		// Step 8: Success!
+		console.log("");
+		console.log("=== Success! ===");
+		console.log(`  Namespace: ${namespace.name}`);
+		console.log(`  Engine namespace: ${engineNamespace}`);
+		console.log(`  Vercel URL: ${vercelUrl}`);
+		console.log(`  Dashboard: ${dashboardUrl}`);
 		await updateComment(
 			commentId,
 			intro + tableHeader + `| \`${VERCEL_PROJECT_NAME}\` | \`${namespace.name}\` | Ready | [Dashboard](${dashboardUrl}) |`
 		);
-
-		console.log("Done!");
 	} catch (error: any) {
 		console.error("Error:", error);
 
