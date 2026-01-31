@@ -514,6 +514,10 @@ async function getOrCreateVercelBypassSecret(): Promise<string | null> {
 	if (!response.ok) {
 		const text = await response.text();
 		console.log(`  Could not create bypass secret: ${response.status} ${text}`);
+		if (text.includes("maximum of 10")) {
+			console.log(`  NOTE: Vercel has a limit of 10 bypass secrets per account.`);
+			console.log(`  Delete unused bypass secrets from other projects in your Vercel dashboard.`);
+		}
 		return null;
 	}
 
