@@ -486,11 +486,15 @@ async function getOrCreateVercelBypassSecret(): Promise<string | null> {
 
 	if (getResponse.ok) {
 		const data = await getResponse.json();
+		console.log(`  Bypass response: ${JSON.stringify(data)}`);
 		const bypasses = Object.entries(data.protectionBypass || {});
 		if (bypasses.length > 0) {
 			console.log("  Found existing bypass secret");
 			return bypasses[0][0];
 		}
+		console.log("  No existing bypass secrets found for this project");
+	} else {
+		console.log(`  Failed to get bypass secrets: ${getResponse.status}`);
 	}
 
 	// Create a new bypass secret (empty body auto-generates)
