@@ -545,13 +545,11 @@ async function setPlatformEnvVars(
 ): Promise<void> {
 	switch (PLATFORM) {
 		case "vercel":
-			await setVercelEnvVar("RIVET_ENDPOINT", endpoint, branch);
-			await setVercelEnvVar("RIVET_NAMESPACE", namespace, branch);
-			await setVercelEnvVar("RIVET_RUNNER_TOKEN", secretToken, branch);
-			await setVercelEnvVar("RIVET_PUBLISHABLE_TOKEN", publishableToken, branch);
-			// Public endpoint/token for metadata response (tells clients where to connect)
-			// Format: https://namespace:token@api.rivet.dev
+			// RIVET_ENDPOINT: namespace:token@host format for backend
 			const endpointUrl = new URL(endpoint);
+			const rivetEndpoint = `${endpointUrl.protocol}//${namespace}:${secretToken}@${endpointUrl.host}`;
+			await setVercelEnvVar("RIVET_ENDPOINT", rivetEndpoint, branch);
+			// RIVET_PUBLIC_ENDPOINT: namespace:token@host format for clients (uses publishable token)
 			const publicEndpoint = `${endpointUrl.protocol}//${namespace}:${publishableToken}@${endpointUrl.host}`;
 			await setVercelEnvVar("RIVET_PUBLIC_ENDPOINT", publicEndpoint, branch);
 			break;
