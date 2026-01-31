@@ -53,4 +53,4 @@ Get your token from [Vercel Account Settings](https://vercel.com/account/tokens)
 gh secret set VERCEL_TOKEN
 ```
 
-<!-- Deployment protection bypass is automatically configured via the Vercel API -->
+Deployment protection is automatically bypassed by generating a token via the Vercel API.
