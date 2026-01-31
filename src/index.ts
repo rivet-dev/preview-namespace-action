@@ -541,8 +541,9 @@ async function setPlatformEnvVars(
 
 // Fetch available datacenters from Rivet Engine API
 async function getDatacenters(accessToken: string): Promise<string[]> {
-	const { datacenters } = await rivetEngineFetch("/datacenters", accessToken);
-	return datacenters.map((dc: any) => dc.name);
+	const response = await rivetEngineFetch("/datacenters", accessToken);
+	console.log("  /datacenters response:", JSON.stringify(response, null, 2));
+	return response.datacenters.map((dc: any) => dc.name);
 }
 
 // Configure runner for all datacenters
