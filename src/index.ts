@@ -474,13 +474,16 @@ async function setVercelEnvVar(
 async function getOrCreateVercelBypassSecret(): Promise<string | null> {
 	const teamQuery = VERCEL_TEAM_ID ? `?teamId=${VERCEL_TEAM_ID}` : "";
 
-	// First, check if a bypass secret already exists
+	// PATCH with empty protectionBypass to get existing secrets without creating new ones
 	const getResponse = await fetch(
 		`https://api.vercel.com/v1/projects/${VERCEL_PROJECT_ID}/protection-bypass${teamQuery}`,
 		{
+			method: "PATCH",
 			headers: {
 				Authorization: `Bearer ${VERCEL_TOKEN}`,
+				"Content-Type": "application/json",
 			},
+			body: JSON.stringify({ protectionBypass: {} }),
 		}
 	);
 
@@ -493,7 +496,7 @@ async function getOrCreateVercelBypassSecret(): Promise<string | null> {
 		}
 	}
 
-	// Create a new bypass secret (empty body auto-generates)
+	// Create a new bypass secret (empty body auto-generates one)
 	console.log("  Creating Vercel bypass secret...");
 	const response = await fetch(
 		`https://api.vercel.com/v1/projects/${VERCEL_PROJECT_ID}/protection-bypass${teamQuery}`,
