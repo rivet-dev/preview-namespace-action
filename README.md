@@ -1,6 +1,6 @@
-# Rivet Vercel Preview Action
+# Rivet Preview Namespace Action
 
-Automatically create Rivet namespaces for Vercel preview deployments.
+Automatically create Rivet namespaces for preview deployments. Currently supports Vercel, with more platforms coming soon.
 
 ## Usage
 
@@ -25,7 +25,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: rivet-dev/vercel-preview-action@v1
+      - uses: rivet-dev/preview-namespace-action@v1
         with:
           rivet-token: ${{ secrets.RIVET_CLOUD_TOKEN }}
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -45,8 +45,9 @@ jobs:
 
 | Input | Required | Default | Description |
 |:------|:---------|:--------|:------------|
+| `platform` | No | `vercel` | Deployment platform (currently only `vercel` is supported) |
 | `rivet-token` | Yes | - | Rivet Cloud API token |
-| `vercel-token` | Yes | - | Vercel API token |
+| `vercel-token` | When platform is `vercel` | - | Vercel API token |
 | `rivet-endpoint` | No | `https://api.rivet.dev` | Rivet Engine API endpoint |
 | `github-token` | No | `${{ github.token }}` | GitHub token for PR comments |
 | `main-branch` | No | `main` | Main branch name for production deployments |
@@ -54,7 +55,9 @@ jobs:
 
 ## Runner Configuration
 
-The `runner-config` input accepts a JSON object with the following options:
+The `runner-config` input accepts a JSON object that is passed directly to the Rivet API. Any properties you specify will override the defaults.
+
+**Default values:**
 
 | Option | Default | Description |
 |:-------|:--------|:------------|
@@ -63,12 +66,12 @@ The `runner-config` input accepts a JSON object with the following options:
 | `request_lifespan` | `270` | Request timeout in seconds |
 | `slots_per_runner` | `1` | Slots per runner instance |
 | `runners_margin` | `0` | Runner margin for scaling |
-| `headers` | `{}` | Custom headers for Vercel requests |
+| `headers` | `{}` | Custom headers for requests to your deployment |
 
 ### Example: Custom Runner Limits
 
 ```yaml
-- uses: rivet-dev/vercel-preview-action@v1
+- uses: rivet-dev/preview-namespace-action@v1
   with:
     rivet-token: ${{ secrets.RIVET_CLOUD_TOKEN }}
     vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -94,7 +97,7 @@ gh secret set VERCEL_AUTOMATION_BYPASS_SECRET
 ### Step 3: Configure the Action
 
 ```yaml
-- uses: rivet-dev/vercel-preview-action@v1
+- uses: rivet-dev/preview-namespace-action@v1
   with:
     rivet-token: ${{ secrets.RIVET_CLOUD_TOKEN }}
     vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -108,7 +111,7 @@ This adds the `x-vercel-protection-bypass` header to all requests from Rivet to 
 If your main branch is not named `main`, configure it:
 
 ```yaml
-- uses: rivet-dev/vercel-preview-action@v1
+- uses: rivet-dev/preview-namespace-action@v1
   with:
     rivet-token: ${{ secrets.RIVET_CLOUD_TOKEN }}
     vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -118,15 +121,21 @@ If your main branch is not named `main`, configure it:
 ## What It Does
 
 1. Creates a Rivet namespace for each PR (`pr-{number}`) or production (`production`)
-2. Sets Vercel environment variables for the preview/production branch
-3. Configures Rivet serverless runners for all regions to point to Vercel
+2. Sets platform environment variables for the preview/production branch
+3. Configures Rivet serverless runners for all regions to point to your deployment
 4. Comments on PR with namespace status and dashboard link
 
-## Environment Variables Set on Vercel
+## Environment Variables Set
 
-The action automatically sets these environment variables on your Vercel project:
+The action automatically sets these environment variables on your deployment platform:
 
 - `RIVET_ENDPOINT` - Rivet Engine API endpoint
 - `RIVET_NAMESPACE` - Rivet namespace identifier
 - `RIVET_RUNNER_TOKEN` - Secret token for the serverless runner
 - `RIVET_PUBLISHABLE_TOKEN` - Publishable token for client-side use
+
+## Supported Platforms
+
+- **Vercel** - Full support
+- **Railway** - Coming soon
+- **Other platforms** - Open an issue to request support

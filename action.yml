@@ -1,17 +1,21 @@
-name: 'Rivet Vercel Preview'
-description: 'Automatically create Rivet namespaces for Vercel preview deployments'
+name: 'Rivet Preview Namespace'
+description: 'Automatically create Rivet namespaces for preview deployments'
 author: 'Rivet'
 branding:
   icon: 'server'
   color: 'orange'
 
 inputs:
+  platform:
+    description: 'Deployment platform (currently only "vercel" is supported)'
+    required: false
+    default: 'vercel'
   rivet-token:
     description: 'Rivet Cloud API token'
     required: true
   vercel-token:
-    description: 'Vercel API token'
-    required: true
+    description: 'Vercel API token (required when platform is "vercel")'
+    required: false
   rivet-endpoint:
     description: 'Rivet Engine API endpoint'
     required: false
@@ -26,13 +30,7 @@ inputs:
     default: 'main'
   runner-config:
     description: |
-      JSON object to override runner configuration. Available options:
-      - max_runners: Maximum concurrent runners (default: 100000)
-      - min_runners: Minimum runners to keep warm (default: 0)
-      - request_lifespan: Request timeout in seconds (default: 270)
-      - slots_per_runner: Slots per runner instance (default: 1)
-      - runners_margin: Runner margin for scaling (default: 0)
-      - headers: Custom headers for Vercel requests (useful for auth bypass)
+      JSON object to override runner configuration. Passed directly to the Rivet API.
 
       Example for private Vercel deployments with auth bypass:
       runner-config: '{"headers": {"x-vercel-protection-bypass": "${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}"}}'
@@ -52,6 +50,7 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         RIVET_CLOUD_TOKEN: ${{ inputs.rivet-token }}
         RIVET_ENGINE_ENDPOINT: ${{ inputs.rivet-endpoint }}
+        PLATFORM: ${{ inputs.platform }}
         VERCEL_TOKEN: ${{ inputs.vercel-token }}
         PR_NUMBER: ${{ github.event.pull_request.number || '' }}
         BRANCH_NAME: ${{ github.head_ref || github.ref_name }}

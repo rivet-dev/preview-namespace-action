@@ -3,24 +3,16 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN!;
 const RIVET_CLOUD_TOKEN = process.env.RIVET_CLOUD_TOKEN!;
 const RIVET_CLOUD_ENDPOINT = "https://cloud-api.rivet.dev";
 const RIVET_ENGINE_ENDPOINT = process.env.RIVET_ENGINE_ENDPOINT || "https://api.rivet.dev";
-const VERCEL_TOKEN = process.env.VERCEL_TOKEN!;
+const PLATFORM = process.env.PLATFORM || "vercel";
+const VERCEL_TOKEN = process.env.VERCEL_TOKEN;
 const PR_NUMBER = process.env.PR_NUMBER; // Optional - not set for push to main
 const BRANCH_NAME = process.env.BRANCH_NAME || "main";
 const REPO_FULL_NAME = process.env.REPO_FULL_NAME!;
 const RUN_ID = process.env.RUN_ID!;
 const MAIN_BRANCH = process.env.MAIN_BRANCH || "main";
 
-// Runner config overrides (parsed from JSON)
-interface RunnerConfigOverrides {
-	max_runners?: number;
-	min_runners?: number;
-	request_lifespan?: number;
-	slots_per_runner?: number;
-	runners_margin?: number;
-	headers?: Record<string, string>;
-}
-
-const RUNNER_CONFIG: RunnerConfigOverrides = (() => {
+// Runner config overrides (any JSON object, passed directly to API)
+const RUNNER_CONFIG: Record<string, any> = (() => {
 	try {
 		return JSON.parse(process.env.RUNNER_CONFIG || "{}");
 	} catch (e) {
@@ -29,6 +21,19 @@ const RUNNER_CONFIG: RunnerConfigOverrides = (() => {
 	}
 })();
 
+// Validate platform
+const SUPPORTED_PLATFORMS = ["vercel"];
+if (!SUPPORTED_PLATFORMS.includes(PLATFORM)) {
+	console.error(`Unsupported platform: "${PLATFORM}". Currently supported platforms: ${SUPPORTED_PLATFORMS.join(", ")}`);
+	process.exit(1);
+}
+
+// Validate platform-specific requirements
+if (PLATFORM === "vercel" && !VERCEL_TOKEN) {
+	console.error("vercel-token is required when platform is 'vercel'");
+	process.exit(1);
+}
+
 // Determine if this is a PR or main branch
 const IS_PR = !!PR_NUMBER;
 const IS_MAIN = BRANCH_NAME === MAIN_BRANCH;
@@ -36,7 +41,11 @@ const NAMESPACE_NAME = IS_PR ? `pr-${PR_NUMBER}` : "production";
 
 const COMMENT_MARKER = "<!-- rivet-preview-status -->";
 
-// Vercel project info (auto-detected)
+// Platform-specific project info
+let PROJECT_ID: string;
+let PROJECT_NAME: string;
+
+// Vercel-specific info
 let VERCEL_PROJECT_ID: string;
 let VERCEL_TEAM_ID: string | undefined;
 let VERCEL_PROJECT_NAME: string;
@@ -91,6 +100,10 @@ async function getVercelProjectInfo(): Promise<void> {
 	VERCEL_PROJECT_ID = project.id;
 	VERCEL_PROJECT_NAME = project.name;
 	VERCEL_TEAM_ID = project.accountId;
+
+	// Set generic project info
+	PROJECT_ID = VERCEL_PROJECT_ID;
+	PROJECT_NAME = VERCEL_PROJECT_NAME;
 
 	console.log(`Found Vercel project: ${VERCEL_PROJECT_NAME} (${VERCEL_PROJECT_ID})`);
 
@@ -150,6 +163,17 @@ async function getVercelProjectInfo(): Promise<void> {
 	}
 
 	console.log(`Detected Vercel project: ${VERCEL_PROJECT_NAME}, team/user: ${VERCEL_TEAM_SLUG}`);
+}
+
+// Platform-specific project info getter
+async function getPlatformProjectInfo(): Promise<void> {
+	switch (PLATFORM) {
+		case "vercel":
+			await getVercelProjectInfo();
+			break;
+		default:
+			throw new Error(`Unsupported platform: ${PLATFORM}`);
+	}
 }
 
 // Rivet Cloud API helpers
@@ -333,6 +357,16 @@ async function getVercelDeploymentUrl(branch: string, maxWaitMs: number = 120000
 	throw new Error(`Timed out waiting for Vercel deployment for branch: ${branch}`);
 }
 
+// Platform-specific deployment URL getter
+async function getPlatformDeploymentUrl(branch: string): Promise<string> {
+	switch (PLATFORM) {
+		case "vercel":
+			return await getVercelDeploymentUrl(branch);
+		default:
+			throw new Error(`Unsupported platform: ${PLATFORM}`);
+	}
+}
+
 // Vercel API helpers
 async function setVercelEnvVar(
 	key: string,
@@ -415,6 +449,26 @@ async function setVercelEnvVar(
 	}
 }
 
+// Platform-specific env var setter
+async function setPlatformEnvVars(
+	endpoint: string,
+	namespace: string,
+	secretToken: string,
+	publishableToken: string,
+	branch: string
+): Promise<void> {
+	switch (PLATFORM) {
+		case "vercel":
+			await setVercelEnvVar("RIVET_ENDPOINT", endpoint, branch);
+			await setVercelEnvVar("RIVET_NAMESPACE", namespace, branch);
+			await setVercelEnvVar("RIVET_RUNNER_TOKEN", secretToken, branch);
+			await setVercelEnvVar("RIVET_PUBLISHABLE_TOKEN", publishableToken, branch);
+			break;
+		default:
+			throw new Error(`Unsupported platform: ${PLATFORM}`);
+	}
+}
+
 // Fetch available datacenters from Rivet Engine API
 async function getDatacenters(accessToken: string): Promise<string[]> {
 	const { datacenters } = await rivetEngineFetch("/datacenters", accessToken);
@@ -425,23 +479,28 @@ async function getDatacenters(accessToken: string): Promise<string[]> {
 async function configureRunners(
 	accessToken: string,
 	namespace: string,
-	vercelUrl: string
+	deploymentUrl: string
 ): Promise<void> {
 	// Get all available datacenters
 	console.log("  Fetching available datacenters...");
 	const datacenterNames = await getDatacenters(accessToken);
 	console.log(`  Found ${datacenterNames.length} datacenters: ${datacenterNames.join(", ")}`);
 
-	// Build the serverless config with defaults and overrides
+	// Build the serverless config with defaults, then apply any overrides
 	const serverlessConfig = {
-		url: `https://${vercelUrl}/api/rivet`,
-		headers: RUNNER_CONFIG.headers || {},
-		min_runners: RUNNER_CONFIG.min_runners ?? 0,
-		max_runners: RUNNER_CONFIG.max_runners ?? 100000,
-		slots_per_runner: RUNNER_CONFIG.slots_per_runner ?? 1,
-		request_lifespan: RUNNER_CONFIG.request_lifespan ?? 270,
-		runners_margin: RUNNER_CONFIG.runners_margin ?? 0,
+		url: `https://${deploymentUrl}/api/rivet`,
+		headers: {},
+		min_runners: 0,
+		max_runners: 100000,
+		slots_per_runner: 1,
+		request_lifespan: 270,
+		runners_margin: 0,
+		// Apply any overrides from runner-config
+		...RUNNER_CONFIG,
 	};
+
+	// Ensure URL is always set correctly (can't be overridden)
+	serverlessConfig.url = `https://${deploymentUrl}/api/rivet`;
 
 	console.log("  Runner config:", JSON.stringify(serverlessConfig, null, 2));
 
@@ -473,7 +532,8 @@ async function configureRunners(
 
 // Main flow
 async function main() {
-	console.log("=== Rivet Preview Action ===");
+	console.log("=== Rivet Preview Namespace Action ===");
+	console.log(`Platform: ${PLATFORM}`);
 	console.log(`Mode: ${IS_PR ? `PR #${PR_NUMBER}` : `Production (${MAIN_BRANCH} branch)`}`);
 	console.log(`Branch: ${BRANCH_NAME}`);
 	console.log(`Main branch: ${MAIN_BRANCH}`);
@@ -490,18 +550,18 @@ async function main() {
 	let commentId = await findExistingComment();
 
 	try {
-		// Auto-detect Vercel project info
-		console.log("Step 1: Detecting Vercel project...");
-		await getVercelProjectInfo();
+		// Step 1: Detect platform project
+		console.log(`Step 1: Detecting ${PLATFORM} project...`);
+		await getPlatformProjectInfo();
 
-		// Step 1: Creating namespace
+		// Step 2: Creating namespace
 		const intro = IS_PR
-			? `This PR has a Rivet namespace connected to your Vercel deployment. [Learn more](https://rivet.dev/docs)\n\n`
-			: `Rivet production namespace connected to Vercel. [Learn more](https://rivet.dev/docs)\n\n`;
+			? `This PR has a Rivet namespace connected to your ${PLATFORM} deployment. [Learn more](https://rivet.dev/docs)\n\n`
+			: `Rivet production namespace connected to ${PLATFORM}. [Learn more](https://rivet.dev/docs)\n\n`;
 		const tableHeader = `| Project | Namespace | Status | Actions |\n|:--------|:----------|:-------|:-------|\n`;
 		commentId = await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${VERCEL_PROJECT_NAME}\` | - | Creating... | - |`
+			intro + tableHeader + `| \`${PROJECT_NAME}\` | - | Creating... | - |`
 		);
 
 		// Get project/org info from token
@@ -523,13 +583,19 @@ async function main() {
 		console.log(`  Display name: "${displayName}" (from: "${title}")`);
 
 		// Namespace metadata
-		const namespaceMetadata = {
+		const namespaceMetadata: Record<string, any> = {
 			skipOnboarding: true,
-			provider: "vercel",
-			vercelProject: VERCEL_PROJECT_NAME,
-			...(IS_PR ? { prNumber: PR_NUMBER } : {}),
-			...(IS_MAIN ? { isProduction: true } : {}),
+			provider: PLATFORM,
 		};
+		if (PLATFORM === "vercel") {
+			namespaceMetadata.vercelProject = VERCEL_PROJECT_NAME;
+		}
+		if (IS_PR) {
+			namespaceMetadata.prNumber = PR_NUMBER;
+		}
+		if (IS_MAIN) {
+			namespaceMetadata.isProduction = true;
+		}
 		console.log(`  Metadata: ${JSON.stringify(namespaceMetadata)}`);
 
 		try {
@@ -598,42 +664,39 @@ async function main() {
 
 		console.log("  Created: secret, publishable, and access tokens");
 
-		// Step 5: Configure Vercel env vars
+		// Step 5: Configure platform env vars
 		console.log("");
-		console.log("Step 5: Setting Vercel environment variables...");
+		console.log(`Step 5: Setting ${PLATFORM} environment variables...`);
 		const dashboardUrl = `https://dashboard.rivet.dev/orgs/${organization}/projects/${project}/ns/${namespace.name}?skipOnboarding=1`;
 		commentId = await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${VERCEL_PROJECT_NAME}\` | \`${namespace.name}\` | Configuring Vercel... | [Dashboard](${dashboardUrl}) |`
+			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Configuring ${PLATFORM}... | [Dashboard](${dashboardUrl}) |`
 		);
 
-		await setVercelEnvVar("RIVET_ENDPOINT", RIVET_ENGINE_ENDPOINT, BRANCH_NAME);
-		await setVercelEnvVar("RIVET_NAMESPACE", engineNamespace, BRANCH_NAME);
-		await setVercelEnvVar("RIVET_RUNNER_TOKEN", secretToken, BRANCH_NAME);
-		await setVercelEnvVar("RIVET_PUBLISHABLE_TOKEN", publishableToken, BRANCH_NAME);
+		await setPlatformEnvVars(RIVET_ENGINE_ENDPOINT, engineNamespace, secretToken, publishableToken, BRANCH_NAME);
 
 		console.log("  Done setting env vars");
 
-		// Step 6: Wait for Vercel deployment and configure runner
+		// Step 6: Wait for platform deployment and configure runner
 		console.log("");
-		console.log("Step 6: Waiting for Vercel deployment...");
+		console.log(`Step 6: Waiting for ${PLATFORM} deployment...`);
 		commentId = await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${VERCEL_PROJECT_NAME}\` | \`${namespace.name}\` | Waiting for Vercel... | [Dashboard](${dashboardUrl}) |`
+			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Waiting for ${PLATFORM}... | [Dashboard](${dashboardUrl}) |`
 		);
 
-		const vercelUrl = await getVercelDeploymentUrl(BRANCH_NAME);
-		console.log(`  Got Vercel deployment URL: ${vercelUrl}`);
+		const deploymentUrl = await getPlatformDeploymentUrl(BRANCH_NAME);
+		console.log(`  Got ${PLATFORM} deployment URL: ${deploymentUrl}`);
 
 		// Step 7: Configure runner for all regions
 		console.log("");
 		console.log("Step 7: Configuring Rivet runners...");
 		commentId = await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${VERCEL_PROJECT_NAME}\` | \`${namespace.name}\` | Configuring runners... | [Dashboard](${dashboardUrl}) |`
+			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Configuring runners... | [Dashboard](${dashboardUrl}) |`
 		);
 
-		await configureRunners(accessToken, engineNamespace, vercelUrl);
+		await configureRunners(accessToken, engineNamespace, deploymentUrl);
 
 		console.log("  Runners configured");
 
@@ -642,18 +705,18 @@ async function main() {
 		console.log("=== Success! ===");
 		console.log(`  Namespace: ${namespace.name}`);
 		console.log(`  Engine namespace: ${engineNamespace}`);
-		console.log(`  Vercel URL: ${vercelUrl}`);
+		console.log(`  ${PLATFORM} URL: ${deploymentUrl}`);
 		console.log(`  Dashboard: ${dashboardUrl}`);
 		await updateComment(
 			commentId,
-			intro + tableHeader + `| \`${VERCEL_PROJECT_NAME}\` | \`${namespace.name}\` | Ready | [Dashboard](${dashboardUrl}) |`
+			intro + tableHeader + `| \`${PROJECT_NAME}\` | \`${namespace.name}\` | Ready | [Dashboard](${dashboardUrl}) |`
 		);
 	} catch (error: any) {
 		console.error("Error:", error);
 
-		const errorIntro = `This PR has a Rivet namespace connected to your Vercel deployment. [Learn more](https://rivet.dev/docs)\n\n`;
+		const errorIntro = `This PR has a Rivet namespace connected to your ${PLATFORM} deployment. [Learn more](https://rivet.dev/docs)\n\n`;
 		const errorHeader = `| Project | Namespace | Status | Actions |\n|:--------|:----------|:-------|:-------|\n`;
-		const projectName = VERCEL_PROJECT_NAME || "unknown";
+		const projectName = PROJECT_NAME || "unknown";
 		await updateComment(
 			commentId,
 			errorIntro + errorHeader + `| \`${projectName}\` | - | Failed | [Logs](${runLogsUrl}) |`
