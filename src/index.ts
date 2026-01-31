@@ -458,7 +458,7 @@ async function setVercelEnvVar(
 async function getOrCreateVercelBypassSecret(): Promise<string | null> {
 	const teamQuery = VERCEL_TEAM_ID ? `?teamId=${VERCEL_TEAM_ID}` : "";
 
-	// First, check if a bypass secret already exists with our note
+	// First, check if a bypass secret already exists
 	const getResponse = await fetch(
 		`https://api.vercel.com/v1/projects/${VERCEL_PROJECT_ID}/protection-bypass${teamQuery}`,
 		{
@@ -470,16 +470,14 @@ async function getOrCreateVercelBypassSecret(): Promise<string | null> {
 
 	if (getResponse.ok) {
 		const data = await getResponse.json();
-		const existing = Object.entries(data.protectionBypass || {}).find(
-			([_, value]: [string, any]) => value.note === "Rivet automation"
-		);
-		if (existing) {
+		const bypasses = Object.entries(data.protectionBypass || {});
+		if (bypasses.length > 0) {
 			console.log("  Found existing bypass secret");
-			return existing[0];
+			return bypasses[0][0];
 		}
 	}
 
-	// Create a new bypass secret
+	// Create a new bypass secret (empty body auto-generates)
 	console.log("  Creating Vercel bypass secret...");
 	const response = await fetch(
 		`https://api.vercel.com/v1/projects/${VERCEL_PROJECT_ID}/protection-bypass${teamQuery}`,
@@ -489,7 +487,7 @@ async function getOrCreateVercelBypassSecret(): Promise<string | null> {
 				Authorization: `Bearer ${VERCEL_TOKEN}`,
 				"Content-Type": "application/json",
 			},
-			body: JSON.stringify({ note: "Rivet automation" }),
+			body: JSON.stringify({}),
 		}
 	);
 
@@ -501,14 +499,11 @@ async function getOrCreateVercelBypassSecret(): Promise<string | null> {
 
 	const result = await response.json();
 
-	// Find the secret we just created
-	const newSecret = Object.entries(result.protectionBypass || {}).find(
-		([_, value]: [string, any]) => value.note === "Rivet automation"
-	);
-
-	if (newSecret) {
+	// Get the first bypass secret
+	const bypasses = Object.entries(result.protectionBypass || {});
+	if (bypasses.length > 0) {
 		console.log("  Created bypass secret");
-		return newSecret[0];
+		return bypasses[0][0];
 	}
 
 	return null;
