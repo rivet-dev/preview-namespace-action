@@ -55,4 +55,15 @@ Creates Rivet namespaces for preview deployments.
              vercel-token: ${{ secrets.VERCEL_TOKEN }}
    ```
 
+## How It Works
+
+When a PR is opened or updated:
+
+1. The action creates a Rivet namespace for the PR (or reuses an existing one)
+2. Environment variables (`RIVET_ENDPOINT`, `RIVET_PUBLIC_ENDPOINT`) are set on Vercel for the branch
+3. The action cancels the in-progress Vercel deployment and triggers a redeploy with the new environment variables
+4. Once the redeploy is complete, Rivet runners are configured to connect to the deployment
+
+This redeploy step is necessary because Vercel starts building immediately when a commit is pushed, before the action has a chance to set the required environment variables. The action automatically handles this by triggering a fresh deployment after configuration is complete.
+
 Deployment protection is automatically bypassed by generating a token via the Vercel API.
