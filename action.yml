@@ -28,11 +28,7 @@ inputs:
     required: false
     default: 'main'
   runner-config:
-    description: |
-      JSON object to override runner configuration. Passed directly to the Rivet API.
-
-      Example for private Vercel deployments with auth bypass:
-      runner-config: '{"headers": {"x-vercel-protection-bypass": "${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}"}}'
+    description: 'JSON object to override runner configuration. Passed directly to the Rivet API.'
     required: false
     default: '{}'
 
