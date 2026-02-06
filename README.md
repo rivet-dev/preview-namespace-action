@@ -34,7 +34,7 @@ Creates Rivet namespaces for preview deployments.
 
    on:
      pull_request:
-       types: [opened, synchronize, reopened]
+       types: [opened, synchronize, reopened, closed]
      push:
        branches: [main]
 
@@ -67,3 +67,5 @@ When a PR is opened or updated:
 This redeploy step is necessary because Vercel starts building immediately when a commit is pushed, before the action has a chance to set the required environment variables. The action automatically handles this by triggering a fresh deployment after configuration is complete.
 
 Deployment protection is automatically bypassed by generating a token via the Vercel API.
+
+When a PR is closed, the action archives the corresponding Rivet namespace to keep your project tidy.
