@@ -1,20 +1,44 @@
+import fs from "node:fs";
+
 // Environment variables
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN!;
 const RIVET_CLOUD_TOKEN = process.env.RIVET_CLOUD_TOKEN!;
 const RIVET_CLOUD_ENDPOINT = "https://cloud-api.rivet.dev";
 const RIVET_ENGINE_ENDPOINT = process.env.RIVET_ENGINE_ENDPOINT || "https://api.rivet.dev";
 const PLATFORM = process.env.PLATFORM;
+const GITHUB_EVENT_NAME = process.env.GITHUB_EVENT_NAME || "";
+const GITHUB_EVENT_PATH = process.env.GITHUB_EVENT_PATH || "";
+
+function readGitHubEventPayload(): any | null {
+	if (!GITHUB_EVENT_PATH) return null;
+	try {
+		const raw = fs.readFileSync(GITHUB_EVENT_PATH, "utf8");
+		return JSON.parse(raw);
+	} catch (error) {
+		console.log("Failed to read GitHub event payload:", error);
+		return null;
+	}
+}
+
+const EVENT_PAYLOAD = readGitHubEventPayload();
+const PR_NUMBER_FROM_EVENT = EVENT_PAYLOAD?.pull_request?.number
+	? String(EVENT_PAYLOAD.pull_request.number)
+	: undefined;
 
 if (!PLATFORM) {
 	console.error("platform input is required");
 	process.exit(1);
 }
 const VERCEL_TOKEN = process.env.VERCEL_TOKEN;
-const PR_NUMBER = process.env.PR_NUMBER; // Optional - not set for push to main
+const PR_NUMBER = process.env.PR_NUMBER || PR_NUMBER_FROM_EVENT; // Optional - not set for push to main
 const BRANCH_NAME = process.env.BRANCH_NAME || "main";
 const REPO_FULL_NAME = process.env.REPO_FULL_NAME!;
 const RUN_ID = process.env.RUN_ID!;
 const MAIN_BRANCH = process.env.MAIN_BRANCH || "main";
+
+const IS_PR_EVENT = GITHUB_EVENT_NAME === "pull_request";
+const IS_PR_CLOSED = IS_PR_EVENT && EVENT_PAYLOAD?.action === "closed";
+const IS_CLEANUP = IS_PR_CLOSED;
 
 // Runner config overrides (any JSON object, passed directly to API)
 const RUNNER_CONFIG: Record<string, any> = (() => {
@@ -33,8 +57,8 @@ if (!SUPPORTED_PLATFORMS.includes(PLATFORM)) {
 	process.exit(1);
 }
 
-// Validate platform-specific requirements
-if (PLATFORM === "vercel" && !VERCEL_TOKEN) {
+// Validate platform-specific requirements (skip for cleanup)
+if (!IS_CLEANUP && PLATFORM === "vercel" && !VERCEL_TOKEN) {
 	console.error("vercel-token is required when platform is 'vercel'");
 	process.exit(1);
 }
@@ -214,7 +238,11 @@ async function getPlatformProjectInfo(): Promise<void> {
 }
 
 // Rivet Cloud API helpers
-async function rivetCloudFetch(path: string, options: RequestInit = {}): Promise<any> {
+async function rivetCloudFetch(
+	path: string,
+	options: RequestInit = {},
+	config: { expectJson?: boolean } = {}
+): Promise<any> {
 	const url = `${RIVET_CLOUD_ENDPOINT}${path}`;
 
 	const response = await fetch(url, {
@@ -226,12 +254,24 @@ async function rivetCloudFetch(path: string, options: RequestInit = {}): Promise
 		},
 	});
 
+	const text = await response.text();
 	if (!response.ok) {
-		const text = await response.text();
 		throw new Error(`Rivet Cloud API error: ${response.status} ${text}`);
 	}
 
-	return response.json();
+	if (config.expectJson === false) {
+		return { ok: true };
+	}
+
+	if (!text) {
+		return null;
+	}
+
+	try {
+		return JSON.parse(text);
+	} catch {
+		return text;
+	}
 }
 
 // Rivet Engine API helpers
@@ -800,8 +840,63 @@ async function configureRunners(
 	console.log(`  Configured runners for ${datacenterNames.length} datacenters`);
 }
 
-// Main flow
-async function main() {
+function getRepoProjectName(): string {
+	const parts = REPO_FULL_NAME?.split("/") || [];
+	return parts[1] || "unknown";
+}
+
+async function cleanupFlow(): Promise<void> {
+	console.log("=== Rivet Preview Namespace Cleanup ===");
+	console.log(`Event: ${GITHUB_EVENT_NAME}${EVENT_PAYLOAD?.action ? ` (${EVENT_PAYLOAD.action})` : ""}`);
+	console.log(`Repo: ${REPO_FULL_NAME}`);
+	console.log(`PR: ${PR_NUMBER || "unknown"}`);
+	console.log("");
+
+	if (!IS_PR) {
+		console.log("No PR context found, skipping cleanup.");
+		return;
+	}
+
+	const runLogsUrl = `https://github.com/${REPO_FULL_NAME}/actions/runs/${RUN_ID}`;
+	const existingComment = await findExistingComment();
+	let commentId = existingComment?.id ?? null;
+
+	const existingRivetData = existingComment?.body ? parseRivetData(existingComment.body) : null;
+	const namespaceName = existingRivetData?.namespace || (PR_NUMBER ? `pr-${PR_NUMBER}` : null);
+	const projectName = PROJECT_NAME || getRepoProjectName();
+	const tableHeader = `| Project | Namespace | Status | Actions |\n|:--------|:----------|:-------|:-------|\n`;
+	const intro = "Rivet preview namespace cleanup after PR close.\n\n";
+
+	if (!namespaceName) {
+		console.log("No namespace found for cleanup.");
+		if (commentId) {
+			await updateComment(commentId, intro + tableHeader + `| \`${projectName}\` | - | Not found | - |`);
+		}
+		return;
+	}
+
+	console.log("Inspecting Rivet token...");
+	const { project, organization } = await rivetCloudFetch("/tokens/api/inspect");
+
+	console.log(`Archiving namespace: ${namespaceName}`);
+	try {
+		await rivetCloudFetch(
+			`/projects/${project}/namespaces/${namespaceName}?org=${organization}`,
+			{ method: "DELETE" },
+			{ expectJson: false }
+		);
+	} catch (error) {
+		console.log(`Warning: failed to archive namespace ${namespaceName}:`, error);
+		return;
+	}
+
+	console.log("Namespace archived.");
+	if (commentId) {
+		await updateComment(commentId, intro + tableHeader + `| \`${projectName}\` | \`${namespaceName}\` | Archived | - |`);
+	}
+}
+
+async function setupFlow(): Promise<void> {
 	console.log("=== Rivet Preview Namespace Action ===");
 	console.log(`Platform: ${PLATFORM}`);
 	console.log(`Mode: ${IS_PR ? `PR #${PR_NUMBER}` : `Production (${MAIN_BRANCH} branch)`}`);
@@ -1014,6 +1109,16 @@ async function main() {
 
 		process.exit(1);
 	}
+}
+
+// Main flow
+async function main() {
+	if (IS_CLEANUP) {
+		await cleanupFlow();
+		return;
+	}
+
+	await setupFlow();
 }
 
 main();
